@@ -1,4 +1,4 @@
-# Web Terminal Manager
+# Free Web Terminal Manager
 
 Web-based terminal interface for managing Linux scripts and processes.
 
@@ -10,7 +10,8 @@ Web-based terminal interface for managing Linux scripts and processes.
 - 🎨 Real-time terminal output with colors
 - 🔧 Interactive script control
 - 📊 Process status monitoring
-
+###
+The work is far from complete. Further work includes adding login and password authentication, security groups, integration with systemd, and troubleshooting.
 ## Installation
 
 ### On Debian/Ubuntu:
@@ -18,12 +19,14 @@ Web-based terminal interface for managing Linux scripts and processes.
 sudo apt update
 sudo apt install -y python3 python3-pip git
 sudo apt install -y python3-flask python3-flask-socketio
+```
 
 ### Quick setup
 ```bash
-git clone https://github.com/yourusername/web-terminal-manager.git
+git clone https://github.com/MeteoraCD2/free-web-terminal-manager.git
 cd web-terminal-manager
 python3 app.py
+```
 
 ### Usage
 Make your scripts executable: `chmod +x your_script.sh`  
