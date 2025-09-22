@@ -137,6 +137,8 @@ Thumbs.db
 
 # Users file
 users.txt
+# Skripts directory
+skripts/
 
 # Logs
 *.log

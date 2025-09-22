@@ -2,37 +2,53 @@ const socket = io();
 let currentProcess = null;
 let processes = {};
 let term = null;
+let resizeTimeout = null;
 
-// Инициализация при загрузке
 document.addEventListener('DOMContentLoaded', function() {
     loadProcesses();
     setupSocketHandlers();
     
-    // Периодическое обновление статусов
-    setInterval(loadProcesses, 5000);
+    setInterval(() => {
+        loadProcesses();
+    }, 10000);
+    
+    window.addEventListener('resize', handleWindowResize);
 });
 
-// Загрузка списка процессов
 async function loadProcesses() {
     try {
         const response = await fetch('/api/processes');
         const processList = await response.json();
         
-        // Обновляем локальный список
+        const oldProcesses = {...processes};
+        processes = {};
         processList.forEach(proc => {
             processes[proc.name] = proc;
         });
         
         renderProcessesList(processList);
+        
+        if (currentProcess && currentProcess in oldProcesses) {
+            const oldStatus = oldProcesses[currentProcess].status;
+            const newStatus = processes[currentProcess]?.status || 'stopped';
+            if (oldStatus !== newStatus) {
+                updateControlButtons();
+            }
+        }
+        
     } catch (error) {
         console.error('Ошибка загрузки процессов:', error);
     }
 }
 
-// Отображение списка процессов
 function renderProcessesList(processList) {
     const container = document.getElementById('processes-list');
     container.innerHTML = '';
+    
+    if (processList.length === 0) {
+        container.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">Нет доступных скриптов в папке scripts</div>';
+        return;
+    }
     
     processList.forEach(proc => {
         const item = document.createElement('div');
@@ -46,58 +62,52 @@ function renderProcessesList(processList) {
     });
 }
 
-// Выбор процесса
 async function selectProcess(processName) {
     currentProcess = processName;
     
-    // Обновляем UI
     document.querySelectorAll('.process-item').forEach(item => {
         item.classList.remove('active');
     });
     event?.target?.closest('.process-item')?.classList?.add('active');
     
-    // Обновляем заголовок
     document.getElementById('current-process-title').textContent = processName;
     
-    // Показываем терминал
     document.getElementById('terminal-placeholder').style.display = 'none';
     document.getElementById('terminal').style.display = 'block';
     
-    // Инициализируем терминал если нужно
     if (!term) {
         initTerminal();
+    } else {
+        term.clear();
     }
     
-    // Очищаем терминал
-    term.clear();
-    
-    // Получаем историю вывода
     socket.emit('get_process_history', {process: processName});
     
-    // Обновляем кнопки управления
     updateControlButtons();
     
-    // Фокус на терминал
     setTimeout(() => {
-        term.focus();
+        if (term) {
+            term.focus();
+            updateTerminalSize();
+        }
     }, 100);
 }
 
-// Инициализация терминала
 function initTerminal() {
+    const { rows, cols } = calculateTerminalSize();
+    
     term = new Terminal({
         cursorBlink: true,
         theme: {
             background: '#1e1e1e',
             foreground: '#ffffff'
         },
-        rows: 30,
-        cols: 100
+        rows: rows,
+        cols: cols
     });
     
     term.open(document.getElementById('terminal'));
     
-    // Обработчик ввода
     term.onData(e => {
         if (currentProcess) {
             socket.emit('process_input', {
@@ -107,11 +117,52 @@ function initTerminal() {
         }
     });
     
-    // Начальный фокус
     term.focus();
+    
+    setTimeout(updateTerminalSize, 100);
 }
 
-// Обновление кнопок управления
+function calculateTerminalSize() {
+    const terminalElement = document.getElementById('terminal');
+    if (!terminalElement) return { rows: 24, cols: 80 };
+    
+    const containerWidth = terminalElement.clientWidth;
+    const containerHeight = terminalElement.clientHeight;
+    
+    const charWidth = 8;
+    const charHeight = 17;
+    const padding = 20;
+    
+    const cols = Math.max(20, Math.floor((containerWidth - padding) / charWidth));
+    const rows = Math.max(10, Math.floor((containerHeight - padding) / charHeight));
+    
+    return { rows, cols };
+}
+
+function updateTerminalSize() {
+    if (!term) return;
+    
+    const { rows, cols } = calculateTerminalSize();
+    
+    if (term.rows !== rows || term.cols !== cols) {
+        try {
+            term.resize(cols, rows);
+        } catch (error) {
+            console.warn('Ошибка изменения размера терминала:', error);
+        }
+    }
+}
+
+function handleWindowResize() {
+    if (resizeTimeout) {
+        clearTimeout(resizeTimeout);
+    }
+    
+    resizeTimeout = setTimeout(() => {
+        updateTerminalSize();
+    }, 250);
+}
+
 function updateControlButtons() {
     if (!currentProcess) {
         document.getElementById('start-btn').disabled = true;
@@ -133,7 +184,6 @@ function updateControlButtons() {
     }
 }
 
-// Запуск процесса
 async function startProcess() {
     if (!currentProcess) return;
     
@@ -144,22 +194,26 @@ async function startProcess() {
         const result = await response.json();
         
         if (result.success) {
-            // Обновляем статус
             processes[currentProcess] = {name: currentProcess, status: 'running'};
             updateControlButtons();
-            loadProcesses(); // Обновляем список
+            loadProcesses();
+        } else {
+            if (term) {
+                term.write(`\n[Ошибка запуска: ${result.message}]\n`);
+            }
         }
         
-        // Фокус на терминал
         setTimeout(() => {
             if (term) term.focus();
         }, 100);
     } catch (error) {
         console.error('Ошибка запуска процесса:', error);
+        if (term) {
+            term.write('\n[Ошибка сети при запуске процесса]\n');
+        }
     }
 }
 
-// Остановка процесса
 async function stopProcess() {
     if (!currentProcess) return;
     
@@ -170,19 +224,28 @@ async function stopProcess() {
         const result = await response.json();
         
         if (result.success) {
-            // Обновляем статус
             processes[currentProcess] = {name: currentProcess, status: 'stopped'};
             updateControlButtons();
-            loadProcesses(); // Обновляем список
+            loadProcesses();
+        } else {
+            if (term) {
+                term.write(`\n[Ошибка остановки: ${result.message}]\n`);
+            }
         }
     } catch (error) {
         console.error('Ошибка остановки процесса:', error);
+        if (term) {
+            term.write('\n[Ошибка сети при остановке процесса]\n');
+        }
     }
 }
 
-// Перезапуск процесса
 async function restartProcess() {
     if (!currentProcess) return;
+    
+    if (term) {
+        term.write('\n[Перезапуск процесса...]\n');
+    }
     
     await stopProcess();
     setTimeout(() => {
@@ -190,28 +253,45 @@ async function restartProcess() {
     }, 500);
 }
 
-// Настройка обработчиков WebSocket
 function setupSocketHandlers() {
-    // Обновление статуса процесса
     socket.on('process_status_update', function(data) {
         if (data.process in processes) {
             processes[data.process].status = data.status;
-            loadProcesses(); // Обновляем отображение
+            loadProcesses();
             updateControlButtons();
         }
     });
     
-    // Вывод от процесса
     socket.on('process_output', function(data) {
         if (data.process === currentProcess && term) {
             term.write(data.data);
         }
     });
     
-    // История вывода процесса
     socket.on('process_history', function(data) {
         if (data.process === currentProcess && term) {
             term.write(data.data);
         }
+    });
+    
+    socket.on('scripts_updated', function(data) {
+        console.log('Список скриптов обновлен:', data.message);
+        setTimeout(() => {
+            loadProcesses();
+        }, 500);
+    });
+}
+
+function refreshScripts() {
+    const btn = document.querySelector('.btn-refresh');
+    const originalText = btn.textContent;
+    btn.textContent = '🔄 Обновление...';
+    btn.disabled = true;
+    
+    loadProcesses().finally(() => {
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }, 1000);
     });
 }
